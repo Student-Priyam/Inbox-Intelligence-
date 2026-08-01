@@ -80,23 +80,22 @@ def _build_flow() -> Flow:
 def get_login_url() -> str:
     """Returns the Google consent screen URL to send the user to."""
     flow = _build_flow()
+    flow.autogenerate_code_verifier = True  # enables PKCE
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
     st.session_state["oauth_state"] = state
+    st.session_state["code_verifier"] = flow.code_verifier  # save for the exchange step
     return auth_url
 
 
 def handle_redirect() -> bool:
     """
-    Call once near the top of app.py on every run, before rendering the
-    page. If Google just redirected back with `?code=...`, exchanges it
-    for credentials and stores them in session state.
-
-    Returns True if the user is signed in (just now, or from earlier
-    this session); False otherwise.
+    Call once near the top of app.py on every run. If Google just
+    redirected back with a `?code=...`, exchanges it for credentials and
+    stores them in session state.
     """
     if "credentials" in st.session_state:
         return True
@@ -106,13 +105,15 @@ def handle_redirect() -> bool:
         return False
 
     flow = _build_flow()
+    flow.code_verifier = st.session_state.get("code_verifier")  # reattach PKCE verifier
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
         raise AuthError(f"Google sign-in failed: {exc}") from exc
 
     st.session_state["credentials"] = flow.credentials
-    st.query_params.clear()  # scrub ?code=...&state=... from the URL bar
+    st.session_state.pop("code_verifier", None)
+    st.query_params.clear()
     return True
 
 
