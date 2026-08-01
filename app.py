@@ -5,7 +5,29 @@ Main Streamlit entry point for the AI Email Management Dashboard.
 Ties together auth, gmail_fetch, classifier, analytics, and utils into a
 single-page-app style dashboard with sidebar navigation.
 """
+import auth
 
+# --- top of app.py, before any UI is drawn ---
+try:
+    auth.handle_redirect()
+except auth.AuthError as e:
+    st.error(str(e))
+    st.stop()
+
+if not auth.is_authenticated():
+    # ...render your existing landing page markup here...
+    try:
+        login_url = auth.get_login_url()
+        st.link_button("Sign in with Google", login_url)
+    except auth.AuthError as e:
+        st.error(str(e))
+    st.stop()
+
+# From here on, the user is authenticated — existing Refresh Inbox /
+# Sign out logic can stay exactly as it was:
+if st.sidebar.button("Sign out"):
+    auth.sign_out()
+    st.rerun()
 import streamlit as st
 import pandas as pd
 
