@@ -5,11 +5,16 @@ Main Streamlit entry point for the AI Email Management Dashboard.
 Ties together auth, gmail_fetch, classifier, analytics, and utils into a
 single-page-app style dashboard with sidebar navigation.
 """
-
 import streamlit as st
 import pandas as pd
-
-from auth import get_gmail_service, is_authenticated, sign_out, AuthError
+from auth import (
+    handle_redirect,
+    get_login_url,
+    get_gmail_service,
+    is_authenticated,
+    sign_out,
+    AuthError,
+)
 from gmail_fetch import fetch_emails, GmailFetchError
 from classifier import classify_emails, CATEGORY_ORDER
 from analytics import (
@@ -28,29 +33,31 @@ from utils import (
     apply_search,
     count_unread_urgent,
 )
-# --- Gmail auth check, before rendering the dashboard ---
-try:
-    auth.handle_redirect()
-except auth.AuthError as e:
-    st.error(str(e))
-    st.stop()
 
-if not auth.is_authenticated():
-    # your EXISTING landing page code stays here — don't delete it
-    ...
-    try:
-        login_url = auth.get_login_url()
-        st.link_button("Sign in with Google", login_url)
-    except auth.AuthError as e:
-        st.error(str(e))
-    st.stop()
-
+# set_page_config MUST be the first Streamlit command in the script
 st.set_page_config(
     page_title="Inbox Intelligence",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# --- Gmail auth check, before rendering the dashboard ---
+try:
+    handle_redirect()
+except AuthError as e:
+    st.error(str(e))
+    st.stop()
+
+if not is_authenticated():
+    # your EXISTING landing page code stays here — don't delete it
+    ...
+    try:
+        login_url = get_login_url()
+        st.link_button("Sign in with Google", login_url)
+    except AuthError as e:
+        st.error(str(e))
+    st.stop()
 
 # --------------------------------------------------------------------------
 # Global styling — minimal, enterprise-grade look (Stripe/Linear/Vercel-ish)
