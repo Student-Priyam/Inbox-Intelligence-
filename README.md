@@ -1,162 +1,201 @@
 # Inbox Intelligence — AI Email Management Dashboard
 
-A Streamlit dashboard that connects to Gmail, fetches your recent inbox,
-and uses a pre-trained Hugging Face transformer model to classify each
-email as **Urgent**, **Follow-Up**, **FYI**, or **Spam**, with a confidence
-score and a suggested action.
+An AI-powered Streamlit dashboard that connects to Gmail, fetches your recent inbox, and automatically classifies each email into **Urgent**, **Job/Internship**, **Follow-Up**, **News & Promotions**, or **Spam** using a fine-tuned DistilBERT model — complete with a confidence score and a suggested action for every email.
 
 ---
 
-## 1. Project Structure
+## ✨ Features
+
+- 🔐 **Secure Gmail sign-in** via Google OAuth 2.0 — read-only access, credentials never leave your machine
+- 🧠 **AI-powered classification** — a fine-tuned DistilBERT model backed by high-precision rule-based pre-checks (including automatic detection of job/internship alerts from platforms like LinkedIn, Naukri, and Internshala)
+- 📊 **Interactive dashboard** — category breakdown, daily email volume, top senders, and category trends over time
+- 🔍 **Searchable, filterable inbox** — filter by category, sender, date range, or confidence score
+- 📤 **CSV export** — download your classified inbox for further analysis
+- ⚙️ **Fully local inference** — once trained, the model runs entirely on your machine; no email content is sent to a third party
+
+---
+
+## 🏗️ Architecture
 
 ```
-email-management-dashboard/
-├── app.py              # Streamlit UI — pages, layout, routing
-├── auth.py              # Google OAuth 2.0 authentication
-├── gmail_fetch.py        # Gmail API email fetching + parsing
-├── classifier.py         # Zero-shot classification (Hugging Face)
-├── analytics.py          # Plotly chart builders
-├── utils.py              # Formatting, filtering, CSV export
+Gmail API ──▶ gmail_fetch.py ──▶ classifier.py ──┬─▶ rule-based pre-checks (deadline language / job-platform senders / webinar-broadcast language)
+                                                   └─▶ src/inference.py ──▶ models/best_model/ (fine-tuned DistilBERT)
+                                                                                     ▲
+                                                                     training/train_model.py
+                                                                                     ▲
+                                              src/dataset.py + src/preprocessing.py
+                                                                                     ▲
+                                                          dataset/{train,validation,test}.csv
+                                                                                     ▲
+                                                                    data_generation.py
+```
+
+Every email is first checked against a small set of high-precision rules — hard-deadline / mandatory-attendance language → **Urgent**; sender is a known job platform (LinkedIn, Naukri, Internshala, Indeed, etc.) → **Job/Internship**; webinar/livestream/RSVP language in the subject → **News & Promotions**. Everything else is classified by the fine-tuned model.
+
+---
+
+## 🧰 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | [Streamlit](https://streamlit.io/) |
+| Auth | Google OAuth 2.0 (`google-auth-oauthlib`) |
+| Email access | Gmail API (`google-api-python-client`) |
+| AI / NLP | HuggingFace Transformers — fine-tuned `distilbert-base-uncased` |
+| Training | PyTorch, HuggingFace `Trainer`, scikit-learn |
+| Data | Pandas |
+| Visualization | Plotly (dashboard), Matplotlib (training/eval plots) |
+
+---
+
+## 📁 Project Structure
+
+```
+inbox-intelligence/
+├── app.py                     # Streamlit UI — dashboard, inbox, analytics, settings
+├── auth.py                    # Google OAuth 2.0
+├── gmail_fetch.py              # Gmail API fetching + parsing
+├── classifier.py                # Rule-based pre-checks + trained-model inference
+├── analytics.py                  # Plotly chart builders
+├── utils.py                       # Dashboard formatting/filtering helpers
+├── config.py                       # Paths, category labels, hyperparameter defaults
+├── data_generation.py               # Builds the labeled dataset
 ├── requirements.txt
-├── README.md
-├── assets/
-├── .streamlit/config.toml   # Theme
-└── credentials/              # credentials.json + token.json go here
+├── dataset/
+│   ├── train.csv                     # Training split
+│   ├── validation.csv                 # Validation split
+│   └── test.csv                        # Held-out test split
+├── models/
+│   └── best_model/                      # Fine-tuned weights + tokenizer (created after training)
+├── src/
+│   ├── preprocessing.py                  # HTML/URL/signature cleaning
+│   ├── dataset.py                         # CSV loading + tokenized dataset construction
+│   ├── model.py                            # Model construction / loading
+│   ├── train.py                             # Training loop (AdamW, LR schedule, early stopping)
+│   ├── evaluate.py                           # Metrics, confusion matrix, ROC-AUC, plots
+│   ├── inference.py                           # Lightweight predict() wrapper
+│   └── utils.py                                # Seeding, logging helpers
+├── training/
+│   ├── train_model.py                            # CLI: fine-tune and save the best checkpoint
+│   └── evaluate_model.py                          # CLI: full evaluation report
+├── outputs/
+│   ├── plots/                                       # Confusion matrix, ROC curves, training history
+│   └── logs/                                         # Training logs, evaluation reports
+├── assets/                                             # Screenshots used in this README
+└── credentials/                                         # credentials.json + token.json (gitignored)
 ```
 
 ---
 
-## 2. How Classification Works
+## 📊 Dataset
 
-Rather than training a model from scratch, the app uses
-**zero-shot classification** with the pre-trained
-[`facebook/bart-large-mnli`](https://huggingface.co/facebook/bart-large-mnli)
-model. Each email's subject + body is compared against four natural-language
-category descriptions, and the model scores how well each one fits — no
-labeled training data or fine-tuning required.
+The classifier is trained on a labeled dataset of realistic business emails — workplace, HR, banking, phishing, promotional, meeting requests, and follow-up conversations — generated by `data_generation.py` from templates with interchangeable slot values (names, companies, dates, amounts) so examples aren't exact duplicates.
 
-The first time you run the app, this model (~1.6 GB) downloads automatically
-from Hugging Face and is cached locally by `transformers`.
+| Category | Examples |
+|---|---|
+| Urgent | 30 |
+| Job/Internship | 30 |
+| Follow-Up | 30 |
+| News & Promotions | 30 |
+| Spam | 30 |
+| **Total** | **150** |
+
+Split 70/15/15 (train/validation/test) using **stratified sampling**, so every split keeps the same class balance.
+
+> **Note:** this is a small starter dataset intended to exercise the full pipeline end-to-end. For stronger real-world accuracy, grow it with more examples per category — either by generating more via `data_generation.py --per-class N` or by appending your own labeled emails to `dataset/full_dataset.csv`.
 
 ---
 
-## 3. Prerequisites
+## 🚀 Getting Started
+
+### Prerequisites
 
 - Python 3.10+
 - A Google account with Gmail
-- ~2 GB free disk space (for the model download)
+- ~500 MB free disk space for the model weights
 
-Install dependencies:
+### 1. Clone and install
 
 ```bash
+git clone https://github.com/<your-username>/inbox-intelligence.git
+cd inbox-intelligence
 python -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
+### 2. Set up Gmail API & OAuth
 
-## 4. Gmail API Setup Guide
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/), create or select a project.
+2. Enable the **Gmail API** under **APIs & Services > Library**.
+3. Configure the **OAuth consent screen** (External), add scope `https://www.googleapis.com/auth/gmail.readonly`, and add your Gmail address as a test user.
+4. Under **APIs & Services > Credentials**, create an **OAuth Client ID** (Application type: **Desktop app**) and download the JSON.
+5. Save it as `credentials/credentials.json`.
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project (or select an existing one).
-3. In the left menu, go to **APIs & Services > Library**.
-4. Search for **Gmail API** and click **Enable**.
+### 3. Generate the dataset
 
----
+```bash
+python data_generation.py --per-class 30 --seed 42
+```
 
-## 5. Google OAuth 2.0 Setup Guide
+### 4. Train the model
 
-1. In **APIs & Services > OAuth consent screen**:
-   - Choose **External** (unless you have a Google Workspace org).
-   - Fill in an app name, support email, and developer contact email.
-   - Under **Scopes**, add `https://www.googleapis.com/auth/gmail.readonly`.
-   - Under **Test users**, add the Gmail address you'll sign in with
-     (required while the app is in "Testing" mode).
-2. In **APIs & Services > Credentials**:
-   - Click **Create Credentials > OAuth client ID**.
-   - Application type: **Desktop app**.
-   - Name it (e.g. "Inbox Intelligence Local") and click **Create**.
-   - Click **Download JSON**.
-3. Rename the downloaded file to `credentials.json` and place it in the
-   project's `credentials/` folder:
+```bash
+python training/train_model.py
+```
 
-   ```
-   email-management-dashboard/credentials/credentials.json
-   ```
+### 5. Evaluate
 
-> **Note:** While the OAuth consent screen is in "Testing" status, only the
-> test users you added can sign in, and tokens expire after 7 days —
-> you'll simply be prompted to sign in again. Publish the app (or move to
-> production) if you need long-lived, non-test access.
+```bash
+python training/evaluate_model.py
+```
 
----
-
-## 6. Running the App Locally
+### 6. Run the app
 
 ```bash
 streamlit run app.py
 ```
 
-On first load, click **Sign in with Google**. A browser window opens for
-you to authorize read-only Gmail access. After granting access, a
-`token.json` is cached in `credentials/` so you won't need to sign in again
-until it expires.
-
-Click **Refresh Inbox** in the sidebar to fetch and classify your latest
-emails (default: 50).
+Open `http://localhost:8501`, click **Sign in with Google**, authorize read-only access, then **Refresh Inbox**.
 
 ---
 
-## 7. Deployment Guide (Streamlit Community Cloud)
+## 🧪 Model Details
 
-Because OAuth's "Desktop app" flow opens a local browser window, it's best
-suited to running **locally** or on a machine you control. To deploy:
+- **Base model:** `distilbert-base-uncased`, fully fine-tuned (not zero-shot, not feature extraction)
+- **Optimizer:** AdamW with weight decay (0.01)
+- **LR schedule:** linear decay with warmup
+- **Regularization:** label smoothing, gradient clipping, early stopping on validation macro-F1
+- **Evaluation:** accuracy, precision/recall/F1 (per-class + macro), confusion matrix, ROC-AUC, training/validation loss curves
 
-1. Push this project to a GitHub repository (do **not** commit the
-   `credentials/` folder — see `.gitignore` notes below).
-2. Go to [share.streamlit.io](https://share.streamlit.io) and connect your
-   GitHub account.
-3. Select the repository and set the main file path to `app.py`.
-4. Under **Advanced settings > Secrets**, you have two options:
-   - **Simplest:** keep using it as a personal/local tool only.
-   - **For shared deployment:** switch the OAuth client type to **Web
-     application**, add your deployed app's URL as an authorized redirect
-     URI in Google Cloud Console, and adapt `auth.py` to use
-     `Flow.from_client_config()` with that redirect URI instead of
-     `run_local_server()`.
-5. Add a `packages.txt` file with `build-essential` if you hit a build error
-   installing `torch` on Streamlit Cloud's default image.
+Run a single ad-hoc prediction:
 
-**Recommended `.gitignore`:**
-
-```
-credentials/credentials.json
-credentials/token.json
-venv/
-__pycache__/
+```bash
+python training/evaluate_model.py --subject "Mandatory dept meeting tomorrow" --body "All students must attend."
 ```
 
 ---
 
-## 8. Troubleshooting
+## 🗺️ Roadmap
 
-| Issue | Fix |
-|---|---|
-| `Missing credentials/credentials.json` | Complete the OAuth setup steps above and confirm the file path/name. |
-| `redirect_uri_mismatch` | Make sure the OAuth client type is "Desktop app" for local use. |
-| Sign-in works but fetch fails | Confirm the Gmail API is enabled in your Google Cloud project. |
-| Model download is slow / fails | Check your internet connection; the model is ~1.6 GB and downloads once. |
-| "Access blocked: app not verified" | Add your Google account as a test user on the OAuth consent screen. |
+- [ ] Grow the dataset with real, de-identified labeled emails
+- [ ] Evaluate `bert-base-uncased` for a possible accuracy gain
+- [ ] Active-learning loop — correct low-confidence predictions directly in the UI
+- [ ] Multi-label support for emails that are genuinely both Urgent and Follow-Up
+- [ ] Deploy guide for Streamlit Community Cloud with Web-application OAuth flow
 
 ---
 
-## 9. Tech Stack
+## 🤝 Contributing
 
-- **Frontend:** Streamlit
-- **Backend:** Python
-- **Auth:** Google OAuth 2.0 (`google-auth-oauthlib`)
-- **Email Access:** Gmail API (`google-api-python-client`)
-- **AI/NLP:** Hugging Face Transformers (`facebook/bart-large-mnli`, zero-shot)
-- **Data:** Pandas
-- **Visualization:** Plotly
+Contributions are welcome! Please open an issue to discuss what you'd like to change before submitting a pull request.
+
+## 📄 License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">
+  <i>Inbox Intelligence — sorting the noise, so what matters reaches you first.</i>
+</p>
