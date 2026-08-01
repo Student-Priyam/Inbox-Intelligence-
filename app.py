@@ -49,15 +49,11 @@ except AuthError as e:
     st.error(str(e))
     st.stop()
 
-if not is_authenticated():
-    # your EXISTING landing page code stays here — don't delete it
-    ...
-    try:
-        login_url = get_login_url()
-        st.link_button("Sign in with Google", login_url)
-    except AuthError as e:
-        st.error(str(e))
-    st.stop()
+# NOTE: the placeholder "if not is_authenticated(): ... st.stop()" block that
+# used to live here (before CSS was even loaded) has been removed. It was
+# always winning the race against the real landing-page block further down,
+# so render_landing_page() was never reached. The single real auth gate now
+# lives right after render_landing_page() is defined, below.
 
 # --------------------------------------------------------------------------
 # Global styling — minimal, enterprise-grade look (Stripe/Linear/Vercel-ish)
@@ -486,13 +482,17 @@ def render_landing_page():
 
     left, center, right = st.columns([1, 1, 1])
     with center:
-        if st.button("Sign in with Google", type="primary", use_container_width=True):
-            with st.spinner("Waiting for Google sign-in in your browser..."):
-                try:
-                    get_gmail_service()
-                    st.rerun()
-                except AuthError as exc:
-                    st.error(str(exc))
+        # Redirect-based OAuth flow: build the Google consent URL and send
+        # the user there directly via a link button. The old approach here
+        # called get_gmail_service() straight from a plain st.button, which
+        # doesn't work with the redirect flow handle_redirect() expects.
+        try:
+            login_url = get_login_url()
+            st.link_button(
+                "Sign in with Google", login_url, type="primary", use_container_width=True
+            )
+        except AuthError as exc:
+            st.error(str(exc))
 
     st.markdown(
         """<div class="trust-line">
@@ -796,6 +796,3 @@ elif page == "Analytics":
     render_analytics(df)
 elif page == "Settings":
     render_settings()
-
-
-
