@@ -8,3 +8,7 @@ google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.130.0
 python-dateutil>=2.9.0
+datasets>=2.19.0
+scikit-learn>=1.4.0
+accelerate>=0.30.0
+

@@ -8,52 +8,34 @@ Two layers are used together:
 1. Lightweight rule-based checks for patterns a general-purpose model
    struggles with (job platform senders, webinar/livestream broadcasts).
    These are cheap, explainable, and highly reliable for their narrow cases.
-2. Zero-shot classification (facebook/bart-large-mnli) as the fallback for
-   everything else, using natural-language hypotheses per category.
+2. A fine-tuned text classification model (trained locally via
+   train_model.py, saved to model/email_classifier/) as the fallback for
+   everything else.
 
-No training or fine-tuning is performed anywhere.
+CHANGE FROM PREVIOUS VERSION: this used to call facebook/bart-large-mnli
+zero-shot at inference time with no training step. It now loads a model
+that has actually been TRAINED on labeled examples (data/training_data.csv)
+via train_model.py. Run that script (and test_model.py to check its
+accuracy) before using the app — see README_TRAINING.md.
+
+Everything else (function signatures, category names, suggested actions,
+explanation text, rule-based pre-checks) is unchanged, so app.py and
+utils.py don't need any changes.
 """
 
+import json
 import re
-import streamlit as st
-from transformers import pipeline
+from pathlib import Path
 
-MODEL_NAME = "facebook/bart-large-mnli"
+import streamlit as st
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+MODEL_DIR = Path(__file__).parent / "model" / "email_classifier"
 
 # Single source of truth for category order used across the app
 # (dashboard cards, filters, chart colors, etc.)
 CATEGORY_ORDER = ["Urgent", "Job/Internship", "Follow-Up", "News & Promotions", "Spam"]
-
-CATEGORY_HYPOTHESES = {
-    "Urgent": (
-        "This email requires the specific reader to personally take action "
-        "very soon, such as confirming attendance, submitting a document, "
-        "attending an interview, or responding to a real deadline or "
-        "schedule change that directly affects them. It is not a mass "
-        "announcement, newsletter, webinar invite, or advertisement."
-    ),
-    "Job/Internship": (
-        "This email is about a job or internship opportunity, a job "
-        "application status update, a recruiter message, or a job alert "
-        "from a company or a platform such as LinkedIn, Naukri, "
-        "Internshala, Indeed, or Glassdoor."
-    ),
-    "Follow-Up": (
-        "This email asks the reader to reply, confirm, review, or approve "
-        "something within the next day or two, but is not extremely "
-        "time-critical and is not a mass announcement."
-    ),
-    "News & Promotions": (
-        "This email is a general announcement, newsletter, webinar or "
-        "livestream invite, event promotion, product update, or marketing "
-        "message sent to a broad audience. It does not require the "
-        "specific reader to personally act before a real deadline."
-    ),
-    "Spam": (
-        "This email is unsolicited advertising, a suspicious or phishing "
-        "message, or clearly irrelevant promotional spam."
-    ),
-}
 
 SUGGESTED_ACTIONS = {
     "Urgent": "Respond Immediately",
@@ -88,16 +70,10 @@ EXPLANATION_TEMPLATES = {
 }
 
 # --------------------------------------------------------------------------
-# Rule-based pre-checks (run before the ML model, and skip it when they hit)
+# Rule-based pre-checks (run before the trained model, and skip it when they
+# hit). Unchanged from the previous version.
 # --------------------------------------------------------------------------
 
-# Real obligation/deadline language always wins first — this is checked
-# BEFORE the broadcast/newsletter check below, so a mandatory college
-# session or a hard deadline is never demoted just because the email is
-# formatted like an announcement (subject lines with "Session", "Launch",
-# a scheduled date, a meeting link, etc. all look like broadcasts on the
-# surface, but "mandatory" / "without fail" / "closely monitored" are the
-# actual signal that the reader must personally act).
 URGENCY_KEYWORDS = [
     "mandatory", "compulsory", "without fail", "must attend",
     "required to attend", "attendance will be", "closely monitored",
@@ -165,10 +141,39 @@ def _rule_based_category(email):
     return None
 
 
+# --------------------------------------------------------------------------
+# Trained-model layer
+# --------------------------------------------------------------------------
+
+class ModelNotTrainedError(RuntimeError):
+    """Raised when model/email_classifier/ doesn't exist yet."""
+    pass
+
+
 @st.cache_resource(show_spinner=False)
 def load_classifier():
-    """Loads and caches the zero-shot classification pipeline (CPU by default)."""
-    return pipeline("zero-shot-classification", model=MODEL_NAME)
+    """
+    Loads and caches the fine-tuned classification model + tokenizer from
+    model/email_classifier/. That directory is produced by running
+    `python train_model.py` — it isn't downloaded from the internet like
+    the old zero-shot model was, it's the result of actually training on
+    data/training_data.csv.
+    """
+    if not MODEL_DIR.exists():
+        raise ModelNotTrainedError(
+            "No trained model found at model/email_classifier/. Run "
+            "`python train_model.py` from the project root to train it "
+            "(see README_TRAINING.md), then restart the app."
+        )
+
+    tokenizer = AutoTokenizer.from_pretrained(str(MODEL_DIR))
+    model = AutoModelForSequenceClassification.from_pretrained(str(MODEL_DIR))
+    model.eval()
+
+    with open(MODEL_DIR / "label_map.json") as f:
+        category_order = json.load(f)["category_order"]
+
+    return {"tokenizer": tokenizer, "model": model, "category_order": category_order}
 
 
 def _build_text(email):
@@ -196,21 +201,23 @@ def classify_email(email, classifier=None):
         }
 
     classifier = classifier or load_classifier()
+    tokenizer = classifier["tokenizer"]
+    model = classifier["model"]
+    category_order = classifier["category_order"]
+
     text = _build_text(email)
+    inputs = tokenizer(text, truncation=True, max_length=256, return_tensors="pt")
+    with torch.no_grad():
+        logits = model(**inputs).logits
+    probs = torch.softmax(logits, dim=-1)[0]
 
-    hypotheses = list(CATEGORY_HYPOTHESES.values())
-    result = classifier(text, candidate_labels=hypotheses, multi_label=False)
-
-    top_hypothesis = result["labels"][0]
-    top_score = result["scores"][0]
-
-    category = next(
-        cat for cat, hyp in CATEGORY_HYPOTHESES.items() if hyp == top_hypothesis
-    )
+    top_idx = int(torch.argmax(probs))
+    category = category_order[top_idx]
+    confidence = float(probs[top_idx]) * 100
 
     return {
         "category": category,
-        "confidence": round(top_score * 100, 1),
+        "confidence": round(confidence, 1),
         "suggested_action": SUGGESTED_ACTIONS[category],
         "explanation": EXPLANATION_TEMPLATES[category],
     }
@@ -233,4 +240,3 @@ def classify_emails(emails, progress_callback=None):
             progress_callback(i + 1, total)
 
     return classified
-
