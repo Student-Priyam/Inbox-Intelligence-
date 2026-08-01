@@ -185,14 +185,6 @@ python training/evaluate_model.py --subject "Mandatory dept meeting tomorrow" --
 - [ ] Deploy guide for Streamlit Community Cloud with Web-application OAuth flow
 
 ---
-# Inbox Intelligence
-
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://inbox-intelligen-tzgngcybz4n6trwve5mnwz.streamlit.app)
-
-## Live Demo
-
-https://inbox-intelligen-tzgngcybz4n6trwve5mnwz.streamlit.app
----
 
 ## 🤝 Contributing
 
